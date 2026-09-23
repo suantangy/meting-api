@@ -176,8 +176,6 @@ const getTencentCookie = async (env) => {
 
 // ============================================================
 // QQ Music zzc 签名
-//
-// 与目前 musicdl 使用的 zzc 算法保持一致。
 // ============================================================
 
 const tencentZzcSign = (payload) => {
@@ -641,12 +639,6 @@ const parseTencentUrlResult = (
     item.wifiurl ||
     ''
 
-  if (!playUrl) {
-    throw new Error(
-      'QQ 返回空播放地址'
-    )
-  }
-
   if (
     playUrl.startsWith('/')
   ) {
@@ -696,10 +688,13 @@ const parseTencentUrlResult = (
 //
 // 第一条路线：
 // music.vkey.GetVkey.UrlGetVkey
+//
+// 注意：文件名使用 media_mid。
 // ============================================================
 
 const tencentVkey = async (
   songmid,
+  mediaMid,
   quality,
   cookie = ''
 ) => {
@@ -718,15 +713,15 @@ const tencentVkey = async (
     quality === 'M800'
   ) {
     filename =
-      `M800${songmid}${songmid}.mp3`
+      `M800${mediaMid}.mp3`
   } else if (
     quality === 'M500'
   ) {
     filename =
-      `M500${songmid}${songmid}.mp3`
+      `M500${mediaMid}.mp3`
   } else {
     filename =
-      `C400${songmid}${songmid}.m4a`
+      `C400${mediaMid}.m4a`
   }
 
   const cookies =
@@ -804,7 +799,6 @@ const tencentVkey = async (
     }
   }
 
-  // 删除 undefined
   for (
     const key of Object.keys(
       payload.comm
@@ -891,7 +885,7 @@ const tencentVkey = async (
 
   if (!item) {
     throw new Error(
-      `QQ CgiGetVkey ${quality} 无播放地址，result=${item?.result ?? list[0]?.result ?? 'unknown'}: ${JSON.stringify(list).slice(0, 2500)}`
+      `QQ CgiGetVkey ${quality} 无播放地址，result=${list[0]?.result ?? 'unknown'}: ${JSON.stringify(list).slice(0, 2500)}`
     )
   }
 
@@ -948,11 +942,12 @@ const tencentVkey = async (
 // 第二条路线：
 // music.vkey.GetEVkey.CgiGetEVkey
 //
-// 这是目前维护中的 musicdl 所使用的请求结构。
+// 注意：文件名使用 media_mid。
 // ============================================================
 
 const tencentEVkey = async (
   songmid,
+  mediaMid,
   quality,
   cookie = ''
 ) => {
@@ -983,15 +978,8 @@ const tencentEVkey = async (
     ext = '.m4a'
   }
 
-  /*
-   * EVkey 使用：
-   *
-   * prefix + songmid + songmid + extension
-   *
-   * 这是目前 musicdl 的官方接口路线。
-   */
   const filename =
-    `${prefix}${songmid}${songmid}${ext}`
+    `${prefix}${mediaMid}${ext}`
 
   const cookies =
     parseTencentCookie(
@@ -1044,7 +1032,8 @@ const tencentEVkey = async (
   }
 
   const payload = {
-    comm: common,
+    comm:
+      common,
 
     'music.vkey.GetEVkey.CgiGetEVkey': {
       module:
@@ -1076,9 +1065,6 @@ const tencentEVkey = async (
       payload
     )
 
-  /*
-   * EVkey 当前走 musics.fcg + sign。
-   */
   const sign =
     tencentZzcSign(
       body
@@ -1286,12 +1272,6 @@ const tencentStatus = async (
       cookies.refresh_token
     )
 
-  /*
-   * 这里不把任何原始票据返回出去。
-   *
-   * QQ 不同登录方式使用的播放票据字段可能不同，
-   * 所以这里只做候选检测。
-   */
   const playbackCandidates = [
     'playback_key',
     'playbackKey',
@@ -1349,6 +1329,152 @@ const tencentStatus = async (
       playbackKey
         ? '检测到播放相关票据候选字段'
         : '未检测到独立播放票据候选字段；如果 VKEY 仍返回 104003，通常属于 QQ 播放授权限制'
+  }
+}
+
+// ============================================================
+// QQ EVKEY 独立测试
+//
+// 用法：
+// /api?server=tencent&type=evkey&id=歌曲songmid
+//
+// 例如：
+// /api?server=tencent&type=evkey&id=0039MnYb0qxYhV
+//
+// 不经过普通 url 流程，直接测试 EVKEY。
+// ============================================================
+
+const tencentEVkeyTest = async (
+  songmid,
+  env
+) => {
+  if (!songmid) {
+    throw new Error(
+      '缺少 QQ songmid'
+    )
+  }
+
+  const cookie =
+    await getTencentCookie(
+      env
+    )
+
+  if (!cookie) {
+    throw new Error(
+      '未读取到 METING_COOKIE_TENCENT'
+    )
+  }
+
+  const cookies =
+    parseTencentCookie(
+      cookie
+    )
+
+  const hasMusicKey =
+    Boolean(
+      cookies.qqmusic_key ||
+      cookies.qm_keyst
+    )
+
+  if (!hasMusicKey) {
+    throw new Error(
+      'Cookie 中没有 qm_keyst / qqmusic_key'
+    )
+  }
+
+  let detail
+
+  try {
+    detail =
+      await tencentSongDetail(
+        songmid,
+        cookie
+      )
+  } catch (error) {
+    throw new Error(
+      `QQ 获取歌曲详情失败: ${
+        error?.message ||
+        '未知错误'
+      }`
+    )
+  }
+
+  const results = []
+
+  for (
+    const quality of [
+      'M800',
+      'M500',
+      'C400'
+    ]
+  ) {
+    try {
+      const result =
+        await tencentEVkey(
+          songmid,
+          detail.media_mid,
+          quality,
+          cookie
+        )
+
+      results.push({
+        quality,
+
+        ok:
+          true,
+
+        filename:
+          result.filename,
+
+        result:
+          result.result,
+
+        vkey:
+          Boolean(
+            result.vkey
+          ),
+
+        ekey:
+          Boolean(
+            result.ekey
+          ),
+
+        url:
+          result.url ||
+          '',
+
+        raw:
+          result.raw
+      })
+    } catch (error) {
+      results.push({
+        quality,
+
+        ok:
+          false,
+
+        error:
+          error?.message ||
+          '未知错误'
+      })
+    }
+  }
+
+  return {
+    ok:
+      results.some(
+        x =>
+          x.ok
+      ),
+
+    songmid:
+
+      songmid,
+
+    media_mid:
+      detail.media_mid,
+
+    results
   }
 }
 
@@ -1420,9 +1546,6 @@ const tencentGetUrl = async (
     )
   }
 
-  /*
-   * 保留原来的三个质量。
-   */
   const qualities = [
     'M800',
     'M500',
@@ -1443,6 +1566,7 @@ const tencentGetUrl = async (
       const result =
         await tencentVkey(
           songmid,
+          detail.media_mid,
           quality,
           cookie
         )
@@ -1452,6 +1576,7 @@ const tencentGetUrl = async (
       ) {
         return {
           ...result,
+
           method:
             'CgiGetVkey'
         }
@@ -1482,6 +1607,7 @@ const tencentGetUrl = async (
       const result =
         await tencentEVkey(
           songmid,
+          detail.media_mid,
           quality,
           cookie
         )
@@ -1491,6 +1617,7 @@ const tencentGetUrl = async (
       ) {
         return {
           ...result,
+
           method:
             'CgiGetEVkey'
         }
@@ -1594,7 +1721,8 @@ export default async (c) => {
       'lrc',
       'url',
       'pic',
-      'qqstatus'
+      'qqstatus',
+      'evkey'
     ].includes(type)
   ) {
     throw new HTTPException(
@@ -1619,6 +1747,40 @@ export default async (c) => {
         c.env
       )
     )
+  }
+
+  // ==========================================================
+  // QQ EVKEY 独立测试
+  // ==========================================================
+
+  if (
+    server === 'tencent' &&
+    type === 'evkey'
+  ) {
+    try {
+      return c.json(
+        await tencentEVkeyTest(
+          id,
+          c.env
+        )
+      )
+    } catch (error) {
+      console.error(
+        'QQ EVKEY 独立测试失败:',
+        error
+      )
+
+      throw new HTTPException(
+        500,
+        {
+          message:
+            `QQ EVKEY 测试失败: ${
+              error?.message ||
+              '未知错误'
+            }`
+        }
+      )
+    }
   }
 
   // ==========================================================
