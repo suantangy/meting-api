@@ -144,10 +144,40 @@ const parseTencentCookie = (cookie = '') => {
 }
 
 // ============================================================
+// QQ Cookie
+// ============================================================
+
+const getTencentCookie = async (env) => {
+  let cookie = ''
+
+  try {
+    cookie =
+      await readCookieAsync(
+        'tencent',
+        env
+      )
+  } catch (error) {
+    console.error(
+      '读取 QQ Cookie 失败:',
+      error
+    )
+  }
+
+  if (
+    !cookie &&
+    env?.METING_COOKIE_TENCENT
+  ) {
+    cookie =
+      env.METING_COOKIE_TENCENT
+  }
+
+  return cookie || ''
+}
+
+// ============================================================
 // QQ Music zzc 签名
 //
-// 不新增 npm 依赖。
-// 使用项目现有 hash.js 的 SHA1。
+// 与目前 musicdl 使用的 zzc 算法保持一致。
 // ============================================================
 
 const tencentZzcSign = (payload) => {
@@ -158,7 +188,6 @@ const tencentZzcSign = (payload) => {
       .digest('hex')
       .toUpperCase()
 
-  // QQ Music zzc 第一段
   const part1Indexes = [
     23,
     14,
@@ -170,7 +199,6 @@ const tencentZzcSign = (payload) => {
     19
   ]
 
-  // QQ Music zzc 第二段
   const part2Indexes = [
     16,
     1,
@@ -182,7 +210,6 @@ const tencentZzcSign = (payload) => {
     5
   ]
 
-  // QQ Music zzc 20 字节混淆表
   const scramble = [
     89,
     39,
@@ -209,23 +236,19 @@ const tencentZzcSign = (payload) => {
   const part1 =
     part1Indexes
       .filter(
-        (index) =>
-          index < hash.length
+        index =>
+          index < 40
       )
       .map(
-        (index) =>
+        index =>
           hash[index]
       )
       .join('')
 
   const part2 =
     part2Indexes
-      .filter(
-        (index) =>
-          index < hash.length
-      )
       .map(
-        (index) =>
+        index =>
           hash[index]
       )
       .join('')
@@ -313,7 +336,7 @@ const tencentSearch = async (
             'https://y.qq.com/',
 
           'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'
         },
 
         body:
@@ -373,7 +396,7 @@ const tencentSearch = async (
   }
 
   return songs.map(
-    (song) => {
+    song => {
       const singer =
         Array.isArray(
           song.singer
@@ -384,7 +407,7 @@ const tencentSearch = async (
       const artist =
         singer
           .map(
-            (x) =>
+            x =>
               x?.name || ''
           )
           .filter(Boolean)
@@ -441,8 +464,6 @@ const tencentSearch = async (
 
 // ============================================================
 // QQ 音乐歌曲详情
-//
-// songmid → media_mid
 // ============================================================
 
 const tencentSongDetail = async (
@@ -562,186 +583,19 @@ const tencentSongDetail = async (
 }
 
 // ============================================================
-// QQ Music VKEY
-//
-// 当前使用：
-// musics.fcg?sign=xxx
-// +
-// vkey.GetVkeyServer
-// +
-// CgiGetVkey
+// QQ VKEY 公共结果解析
 // ============================================================
 
-const tencentVkey = async (
-  songmid,
-  mediaMid,
-  quality,
-  cookie = '',
-  uin = '0'
+const parseTencentUrlResult = (
+  json,
+  rootKey
 ) => {
-  const guid =
-    String(
-      Math.floor(
-        1000000000 +
-        Math.random() *
-          8999999999
-      )
-    )
-
-  let filename
-
-  if (
-    quality === 'M800'
-  ) {
-    filename =
-      `M800${mediaMid}.mp3`
-  } else if (
-    quality === 'M500'
-  ) {
-    filename =
-      `M500${mediaMid}.mp3`
-  } else {
-    filename =
-      `C400${mediaMid}.m4a`
-  }
-
-  const payload = {
-    comm: {
-      cv: 4747474,
-      ct: 24,
-      format: 'json',
-      inCharset: 'utf-8',
-      outCharset: 'utf-8',
-      notice: 0,
-      platform: 'yqq.json',
-      needNewCode: 1,
-      uin:
-        String(
-          uin || '0'
-        ),
-
-      g_tk_new_20200303:
-        5381,
-
-      g_tk:
-        5381
-    },
-
-    req_1: {
-      module:
-        'vkey.GetVkeyServer',
-
-      method:
-        'CgiGetVkey',
-
-      param: {
-        filename: [
-          filename
-        ],
-
-        guid,
-
-        songmid: [
-          songmid
-        ],
-
-        songtype: [
-          0
-        ],
-
-        uin:
-          String(
-            uin || '0'
-          ),
-
-        loginflag:
-          1,
-
-        platform:
-          '20'
-      }
-    }
-  }
-
-  const body =
-    JSON.stringify(
-      payload
-    )
-
-  // ==========================================================
-  // 关键：
-  // sign 针对实际 POST body 计算
-  // ==========================================================
-
-  const sign =
-    tencentZzcSign(
-      body
-    )
-
-  const url =
-    `https://u.y.qq.com/cgi-bin/musics.fcg?_=${Date.now()}&sign=${encodeURIComponent(
-      sign
-    )}`
-
-  const headers = {
-    ...QQ_HEADERS
-  }
-
-  if (cookie) {
-    headers.Cookie =
-      cookie
-  }
-
-  const response =
-    await fetch(
-      url,
-      {
-        method: 'POST',
-
-        headers,
-
-        body
-      }
-    )
-
-  const text =
-    await response.text()
-
-  if (!response.ok) {
-    throw new Error(
-      `QQ VKEY HTTP ${response.status}: ${text.slice(0, 500)}`
-    )
-  }
-
-  let json
-
-  try {
-    json =
-      JSON.parse(text)
-  } catch {
-    throw new Error(
-      `QQ VKEY 返回非 JSON: ${text.slice(0, 1000)}`
-    )
-  }
-
   const result =
-    json?.req_1
+    json?.[rootKey]
 
   if (!result) {
     throw new Error(
-      `QQ VKEY 缺少 req_1: ${JSON.stringify(json).slice(0, 1500)}`
-    )
-  }
-
-  const code =
-    result.code
-
-  if (
-    code !== undefined &&
-    Number(code) !== 0
-  ) {
-    throw new Error(
-      `QQ VKEY code=${code}: ${JSON.stringify(result).slice(0, 1500)}`
+      `QQ VKEY 缺少 ${rootKey}: ${JSON.stringify(json).slice(0, 2000)}`
     )
   }
 
@@ -762,7 +616,7 @@ const tencentVkey = async (
 
   const item =
     list.find(
-      (x) =>
+      x =>
         x?.purl ||
         x?.wifiurl
     )
@@ -772,7 +626,7 @@ const tencentVkey = async (
       list[0]?.result
 
     throw new Error(
-      `QQ ${quality} 未取得播放地址` +
+      `QQ 未取得播放地址` +
       (
         resultCode !== undefined
           ? `，result=${resultCode}`
@@ -789,19 +643,268 @@ const tencentVkey = async (
 
   if (!playUrl) {
     throw new Error(
-      `QQ ${quality} 返回空播放地址`
+      'QQ 返回空播放地址'
     )
   }
-
-  // ==========================================================
-  // QQ 有些情况下返回相对路径
-  // ==========================================================
 
   if (
     playUrl.startsWith('/')
   ) {
     playUrl =
-      'https://dl.stream.qqmusic.qq.com' +
+      'https://isure.stream.qqmusic.qq.com' +
+      playUrl
+  }
+
+  if (
+    playUrl.startsWith(
+      'http://'
+    )
+  ) {
+    playUrl =
+      playUrl.replace(
+        'http://',
+        'https://'
+      )
+  }
+
+  return {
+    url:
+      playUrl,
+
+    filename:
+      item.filename ||
+      '',
+
+    vkey:
+      item.vkey ||
+      '',
+
+    ekey:
+      item.ekey ||
+      '',
+
+    result:
+      item.result,
+
+    raw:
+      json
+  }
+}
+
+// ============================================================
+// QQ VKEY
+//
+// 第一条路线：
+// music.vkey.GetVkey.UrlGetVkey
+// ============================================================
+
+const tencentVkey = async (
+  songmid,
+  quality,
+  cookie = ''
+) => {
+  const guid =
+    Array.from(
+      { length: 32 },
+      () =>
+        Math.floor(
+          Math.random() * 16
+        ).toString(16)
+    ).join('')
+
+  let filename
+
+  if (
+    quality === 'M800'
+  ) {
+    filename =
+      `M800${songmid}${songmid}.mp3`
+  } else if (
+    quality === 'M500'
+  ) {
+    filename =
+      `M500${songmid}${songmid}.mp3`
+  } else {
+    filename =
+      `C400${songmid}${songmid}.m4a`
+  }
+
+  const cookies =
+    parseTencentCookie(
+      cookie
+    )
+
+  const uin =
+    cookies.uin ||
+    cookies.wxuin ||
+    cookies.qlogin_uid ||
+    '0'
+
+  const musicKey =
+    cookies.qqmusic_key ||
+    cookies.qm_keyst ||
+    ''
+
+  const payload = {
+    comm: {
+      cv: 13020508,
+      v: 13020508,
+      ct: '11',
+      tmeAppID: 'qqmusic',
+      format: 'json',
+      inCharset: 'utf-8',
+      outCharset: 'utf-8',
+      uid: '3931641530',
+
+      qq:
+        musicKey
+          ? String(uin)
+          : undefined,
+
+      authst:
+        musicKey ||
+        undefined,
+
+      tmeLoginType:
+        musicKey
+          ? String(
+              cookies.login_type ||
+              cookies.loginType ||
+              cookies.tmeLoginType ||
+              1
+            )
+          : undefined,
+
+      QIMEI36:
+        '6c9d3cd110abca9b16311cee10001e717614'
+    },
+
+    'music.vkey.GetVkey.UrlGetVkey': {
+      module:
+        'music.vkey.GetVkey',
+
+      method:
+        'UrlGetVkey',
+
+      param: {
+        filename: [
+          filename
+        ],
+
+        guid,
+
+        songmid: [
+          songmid
+        ],
+
+        songtype: [
+          0
+        ]
+      }
+    }
+  }
+
+  // 删除 undefined
+  for (
+    const key of Object.keys(
+      payload.comm
+    )
+  ) {
+    if (
+      payload.comm[key] ===
+      undefined
+    ) {
+      delete payload.comm[key]
+    }
+  }
+
+  const body =
+    JSON.stringify(
+      payload
+    )
+
+  const url =
+    'https://u.y.qq.com/cgi-bin/musicu.fcg'
+
+  const headers = {
+    ...QQ_HEADERS
+  }
+
+  if (cookie) {
+    headers.Cookie =
+      cookie
+  }
+
+  const response =
+    await fetch(
+      url,
+      {
+        method: 'POST',
+        headers,
+        body
+      }
+    )
+
+  const text =
+    await response.text()
+
+  if (!response.ok) {
+    throw new Error(
+      `QQ VKEY HTTP ${response.status}: ${text.slice(0, 800)}`
+    )
+  }
+
+  let json
+
+  try {
+    json =
+      JSON.parse(text)
+  } catch {
+    throw new Error(
+      `QQ VKEY 返回非 JSON: ${text.slice(0, 1200)}`
+    )
+  }
+
+  const result =
+    json?.[
+      'music.vkey.GetVkey.UrlGetVkey'
+    ]
+
+  const list =
+    result?.data?.midurlinfo
+
+  if (
+    !Array.isArray(list) ||
+    !list.length
+  ) {
+    throw new Error(
+      `QQ CgiGetVkey 没有 midurlinfo: ${JSON.stringify(result).slice(0, 2500)}`
+    )
+  }
+
+  const item =
+    list.find(
+      x =>
+        x?.purl ||
+        x?.wifiurl
+    )
+
+  if (!item) {
+    throw new Error(
+      `QQ CgiGetVkey ${quality} 无播放地址，result=${item?.result ?? list[0]?.result ?? 'unknown'}: ${JSON.stringify(list).slice(0, 2500)}`
+    )
+  }
+
+  let playUrl =
+    item.purl ||
+    item.wifiurl ||
+    ''
+
+  if (
+    playUrl.startsWith('/')
+  ) {
+    playUrl =
+      'https://isure.stream.qqmusic.qq.com' +
       playUrl
   }
 
@@ -831,7 +934,287 @@ const tencentVkey = async (
       item.vkey ||
       '',
 
-    guid,
+    result:
+      item.result,
+
+    raw:
+      json
+  }
+}
+
+// ============================================================
+// QQ EVKEY
+//
+// 第二条路线：
+// music.vkey.GetEVkey.CgiGetEVkey
+//
+// 这是目前维护中的 musicdl 所使用的请求结构。
+// ============================================================
+
+const tencentEVkey = async (
+  songmid,
+  quality,
+  cookie = ''
+) => {
+  const guid =
+    Array.from(
+      { length: 32 },
+      () =>
+        Math.floor(
+          Math.random() * 16
+        ).toString(16)
+    ).join('')
+
+  let prefix
+  let ext
+
+  if (
+    quality === 'M800'
+  ) {
+    prefix = 'M800'
+    ext = '.mp3'
+  } else if (
+    quality === 'M500'
+  ) {
+    prefix = 'M500'
+    ext = '.mp3'
+  } else {
+    prefix = 'C400'
+    ext = '.m4a'
+  }
+
+  /*
+   * EVkey 使用：
+   *
+   * prefix + songmid + songmid + extension
+   *
+   * 这是目前 musicdl 的官方接口路线。
+   */
+  const filename =
+    `${prefix}${songmid}${songmid}${ext}`
+
+  const cookies =
+    parseTencentCookie(
+      cookie
+    )
+
+  const uin =
+    cookies.uin ||
+    cookies.wxuin ||
+    cookies.qlogin_uid ||
+    '0'
+
+  const musicKey =
+    cookies.qqmusic_key ||
+    cookies.qm_keyst ||
+    ''
+
+  const loginType =
+    cookies.login_type ||
+    cookies.loginType ||
+    cookies.tmeLoginType ||
+    '1'
+
+  const common = {
+    cv: 13020508,
+    v: 13020508,
+    ct: '19',
+    tmeAppID: 'qqmusic',
+    format: 'json',
+    inCharset: 'utf-8',
+    outCharset: 'utf-8',
+    uid: '3931641530',
+
+    QIMEI36:
+      '6c9d3cd110abca9b16311cee10001e717614'
+  }
+
+  if (
+    uin !== '0' &&
+    musicKey
+  ) {
+    common.qq =
+      String(uin)
+
+    common.authst =
+      musicKey
+
+    common.tmeLoginType =
+      String(loginType)
+  }
+
+  const payload = {
+    comm: common,
+
+    'music.vkey.GetEVkey.CgiGetEVkey': {
+      module:
+        'music.vkey.GetEVkey',
+
+      method:
+        'CgiGetEVkey',
+
+      param: {
+        filename: [
+          filename
+        ],
+
+        guid,
+
+        songmid: [
+          songmid
+        ],
+
+        songtype: [
+          0
+        ]
+      }
+    }
+  }
+
+  const body =
+    JSON.stringify(
+      payload
+    )
+
+  /*
+   * EVkey 当前走 musics.fcg + sign。
+   */
+  const sign =
+    tencentZzcSign(
+      body
+    )
+
+  const url =
+    `https://u.y.qq.com/cgi-bin/musics.fcg?sign=${encodeURIComponent(
+      sign
+    )}`
+
+  const headers = {
+    ...QQ_HEADERS
+  }
+
+  if (cookie) {
+    headers.Cookie =
+      cookie
+  }
+
+  const response =
+    await fetch(
+      url,
+      {
+        method: 'POST',
+        headers,
+        body
+      }
+    )
+
+  const text =
+    await response.text()
+
+  if (!response.ok) {
+    throw new Error(
+      `QQ EVKEY HTTP ${response.status}: ${text.slice(0, 1000)}`
+    )
+  }
+
+  let json
+
+  try {
+    json =
+      JSON.parse(text)
+  } catch {
+    throw new Error(
+      `QQ EVKEY 返回非 JSON: ${text.slice(0, 1500)}`
+    )
+  }
+
+  const result =
+    json?.[
+      'music.vkey.GetEVkey.CgiGetEVkey'
+    ]
+
+  if (!result) {
+    throw new Error(
+      `QQ EVKEY 缺少返回节点: ${JSON.stringify(json).slice(0, 2500)}`
+    )
+  }
+
+  const list =
+    result?.data?.midurlinfo
+
+  if (
+    !Array.isArray(list) ||
+    !list.length
+  ) {
+    throw new Error(
+      `QQ EVKEY 没有 midurlinfo: ${JSON.stringify(result).slice(0, 3000)}`
+    )
+  }
+
+  const item =
+    list.find(
+      x =>
+        x?.purl ||
+        x?.wifiurl
+    )
+
+  if (!item) {
+    const resultCode =
+      list[0]?.result
+
+    throw new Error(
+      `QQ EVKEY ${quality} 无播放地址` +
+      (
+        resultCode !== undefined
+          ? `，result=${resultCode}`
+          : ''
+      ) +
+      `: ${JSON.stringify(list).slice(0, 3000)}`
+    )
+  }
+
+  let playUrl =
+    item.purl ||
+    item.wifiurl ||
+    ''
+
+  if (
+    playUrl.startsWith('/')
+  ) {
+    playUrl =
+      'https://isure.stream.qqmusic.qq.com' +
+      playUrl
+  }
+
+  if (
+    playUrl.startsWith(
+      'http://'
+    )
+  ) {
+    playUrl =
+      playUrl.replace(
+        'http://',
+        'https://'
+      )
+  }
+
+  return {
+    url:
+      playUrl,
+
+    filename:
+      item.filename ||
+      filename,
+
+    quality,
+
+    vkey:
+      item.vkey ||
+      '',
+
+    ekey:
+      item.ekey ||
+      '',
 
     result:
       item.result,
@@ -842,25 +1225,138 @@ const tencentVkey = async (
 }
 
 // ============================================================
+// QQ 状态诊断
+//
+// 不返回 Cookie / token / QQ号原文。
+// ============================================================
+
+const tencentStatus = async (
+  env
+) => {
+  const cookie =
+    await getTencentCookie(
+      env
+    )
+
+  if (!cookie) {
+    return {
+      ok: false,
+      cookie_configured: false,
+      uin: false,
+      wxuin: false,
+      qm_keyst: false,
+      qqmusic_key: false,
+      access_token: false,
+      refresh_token: false,
+      playback_key: false,
+      message:
+        '未读取到 METING_COOKIE_TENCENT'
+    }
+  }
+
+  const cookies =
+    parseTencentCookie(
+      cookie
+    )
+
+  const hasUin =
+    Boolean(
+      cookies.uin ||
+      cookies.wxuin ||
+      cookies.qlogin_uid
+    )
+
+  const hasMusicKey =
+    Boolean(
+      cookies.qm_keyst ||
+      cookies.qqmusic_key
+    )
+
+  const hasAccessToken =
+    Boolean(
+      cookies.psrf_qqaccess_token ||
+      cookies.wxaccess_token ||
+      cookies.access_token
+    )
+
+  const hasRefreshToken =
+    Boolean(
+      cookies.psrf_qqrefresh_token ||
+      cookies.wxrefresh_token ||
+      cookies.refresh_token
+    )
+
+  /*
+   * 这里不把任何原始票据返回出去。
+   *
+   * QQ 不同登录方式使用的播放票据字段可能不同，
+   * 所以这里只做候选检测。
+   */
+  const playbackCandidates = [
+    'playback_key',
+    'playbackKey',
+    'qqCookiePlaybackKey',
+    'qqmusic_playback_key',
+    'qm_playback_key',
+    'psrf_playback_key',
+    'play_key',
+    'playkey',
+    'authst'
+  ]
+
+  const playbackKey =
+    playbackCandidates.some(
+      key =>
+        Boolean(
+          cookies[key]
+        )
+    )
+
+  return {
+    ok: true,
+
+    cookie_configured:
+      true,
+
+    uin:
+      hasUin,
+
+    wxuin:
+      Boolean(
+        cookies.wxuin
+      ),
+
+    qm_keyst:
+      Boolean(
+        cookies.qm_keyst
+      ),
+
+    qqmusic_key:
+      Boolean(
+        cookies.qqmusic_key
+      ),
+
+    access_token:
+      hasAccessToken,
+
+    refresh_token:
+      hasRefreshToken,
+
+    playback_key:
+      playbackKey,
+
+    message:
+      playbackKey
+        ? '检测到播放相关票据候选字段'
+        : '未检测到独立播放票据候选字段；如果 VKEY 仍返回 104003，通常属于 QQ 播放授权限制'
+  }
+}
+
+// ============================================================
 // QQ Music 播放地址
 //
-// songmid
-// ↓
-// song detail
-// ↓
-// media_mid
-// ↓
-// Cookie
-// ↓
-// zzc
-// ↓
-// CgiGetVkey
-// ↓
-// M800
-// ↓
-// M500
-// ↓
-// C400
+// 第一阶段：CgiGetVkey
+// 第二阶段：CgiGetEVkey
 // ============================================================
 
 const tencentGetUrl = async (
@@ -873,39 +1369,10 @@ const tencentGetUrl = async (
     )
   }
 
-  // ==========================================================
-  // 读取已经配置好的 Cookie
-  // ==========================================================
-
-  let cookie = ''
-
-  try {
-    cookie =
-      await readCookieAsync(
-        'tencent',
-        env
-      )
-  } catch (error) {
-    console.error(
-      '读取 QQ Cookie 失败:',
-      error
+  const cookie =
+    await getTencentCookie(
+      env
     )
-  }
-
-  // ==========================================================
-  // 如果 readCookieAsync 没有取到，
-  // 直接尝试 Secret。
-  //
-  // 这样兼容不同版本的 cookie.js。
-  // ==========================================================
-
-  if (
-    !cookie &&
-    env?.METING_COOKIE_TENCENT
-  ) {
-    cookie =
-      env.METING_COOKIE_TENCENT
-  }
 
   if (!cookie) {
     throw new Error(
@@ -913,34 +1380,22 @@ const tencentGetUrl = async (
     )
   }
 
-  // ==========================================================
-  // 解析 Cookie
-  // ==========================================================
-
   const cookies =
     parseTencentCookie(
       cookie
     )
 
-  const uin =
-    cookies.uin ||
-    cookies.qlogin_uid ||
-    '0'
+  const hasMusicKey =
+    Boolean(
+      cookies.qqmusic_key ||
+      cookies.qm_keyst
+    )
 
-  const qmKeyst =
-    cookies.qm_keyst ||
-    cookies.qqmusic_key ||
-    ''
-
-  if (!qmKeyst) {
+  if (!hasMusicKey) {
     throw new Error(
       'Cookie 中没有 qm_keyst / qqmusic_key'
     )
   }
-
-  // ==========================================================
-  // 获取 media_mid
-  // ==========================================================
 
   let detail
 
@@ -959,26 +1414,27 @@ const tencentGetUrl = async (
     )
   }
 
-  const mediaMid =
-    detail.media_mid
-
-  if (!mediaMid) {
+  if (!detail.media_mid) {
     throw new Error(
       `QQ 未取得 media_mid，songmid=${songmid}`
     )
   }
 
-  // ==========================================================
-  // 依次尝试不同音质
-  // ==========================================================
-
+  /*
+   * 保留原来的三个质量。
+   */
   const qualities = [
     'M800',
     'M500',
     'C400'
   ]
 
-  const errors = []
+  const vkeyErrors = []
+  const evkeyErrors = []
+
+  // ==========================================================
+  // 第一阶段：CgiGetVkey
+  // ==========================================================
 
   for (
     const quality of qualities
@@ -987,24 +1443,65 @@ const tencentGetUrl = async (
       const result =
         await tencentVkey(
           songmid,
-          mediaMid,
           quality,
-          cookie,
-          uin
+          cookie
         )
 
       if (
         result?.url
       ) {
-        return result
+        return {
+          ...result,
+          method:
+            'CgiGetVkey'
+        }
       }
     } catch (error) {
       console.error(
-        `QQ ${quality} 获取失败:`,
+        `QQ CgiGetVkey ${quality} 失败:`,
         error
       )
 
-      errors.push(
+      vkeyErrors.push(
+        `${quality}: ${
+          error?.message ||
+          '未知错误'
+        }`
+      )
+    }
+  }
+
+  // ==========================================================
+  // 第二阶段：CgiGetEVkey
+  // ==========================================================
+
+  for (
+    const quality of qualities
+  ) {
+    try {
+      const result =
+        await tencentEVkey(
+          songmid,
+          quality,
+          cookie
+        )
+
+      if (
+        result?.url
+      ) {
+        return {
+          ...result,
+          method:
+            'CgiGetEVkey'
+        }
+      }
+    } catch (error) {
+      console.error(
+        `QQ CgiGetEVkey ${quality} 失败:`,
+        error
+      )
+
+      evkeyErrors.push(
         `${quality}: ${
           error?.message ||
           '未知错误'
@@ -1014,7 +1511,11 @@ const tencentGetUrl = async (
   }
 
   throw new Error(
-    `QQ 音乐无法获取播放地址；${errors.join(
+    `QQ 音乐无法获取播放地址；` +
+    `CgiGetVkey：${vkeyErrors.join(
+      ' | '
+    )}；` +
+    `CgiGetEVkey：${evkeyErrors.join(
       ' | '
     )}`
   )
@@ -1092,7 +1593,8 @@ export default async (c) => {
       'playlist',
       'lrc',
       'url',
-      'pic'
+      'pic',
+      'qqstatus'
     ].includes(type)
   ) {
     throw new HTTPException(
@@ -1105,12 +1607,30 @@ export default async (c) => {
   }
 
   // ==========================================================
+  // QQ 状态
+  // ==========================================================
+
+  if (
+    server === 'tencent' &&
+    type === 'qqstatus'
+  ) {
+    return c.json(
+      await tencentStatus(
+        c.env
+      )
+    )
+  }
+
+  // ==========================================================
   // 鉴权
   // ==========================================================
 
   if (
-    ['lrc', 'url', 'pic']
-      .includes(type)
+    [
+      'lrc',
+      'url',
+      'pic'
+    ].includes(type)
   ) {
     if (
       auth(
@@ -1165,7 +1685,7 @@ export default async (c) => {
 
     return c.json(
       data.map(
-        (x) => {
+        x => {
           return {
             title:
               x.name,
@@ -1216,8 +1736,6 @@ export default async (c) => {
 
   // ==========================================================
   // QQ Music URL
-  //
-  // 完全绕过 @meting/core
   // ==========================================================
 
   if (
@@ -1230,6 +1748,12 @@ export default async (c) => {
           id,
           c.env
         )
+
+      c.header(
+        'X-QQ-Method',
+        result.method ||
+          'unknown'
+      )
 
       return c.redirect(
         result.url
@@ -1440,6 +1964,25 @@ export default async (c) => {
     }
 
     // --------------------------------------------------------
+    // QQ
+    // --------------------------------------------------------
+
+    if (
+      server === 'tencent'
+    ) {
+      url =
+        url
+          .replace(
+            'http://',
+            'https://'
+          )
+          .replace(
+            '://ws.stream.qqmusic.qq.com',
+            '://dl.stream.qqmusic.qq.com'
+          )
+    }
+
+    // --------------------------------------------------------
     // 百度
     // --------------------------------------------------------
 
@@ -1502,7 +2045,7 @@ export default async (c) => {
 
   return c.json(
     data.map(
-      (x) => {
+      x => {
         return {
           title:
             x.name,
