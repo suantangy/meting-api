@@ -34,7 +34,9 @@ const parseTencentCookie = (cookie = '') => {
     .forEach(item => {
       const index = item.indexOf('=')
 
-      if (index <= 0) return
+      if (index <= 0) {
+        return
+      }
 
       const key = item
         .slice(0, index)
@@ -87,7 +89,8 @@ const getTencentAuth = (cookie = '') => {
     '1'
 
   return {
-    uin: String(uin),
+    uin:
+      String(uin),
 
     authst:
       authst ||
@@ -110,17 +113,14 @@ const getTencentAuth = (cookie = '') => {
 
 /* =========================================================
  * 获取 QQ Cookie
+ *
+ * 优先尝试项目已有 Cookie 工具。
+ * 如果没有，则直接读取 Cloudflare Secret。
  * ========================================================= */
 
 const getTencentCookie = async env => {
   let cookie = ''
 
-  /*
-   * 兼容项目现有 cookie.js
-   *
-   * 这里只尝试读取 readCookieAsync。
-   * 如果当前项目没有这个方法，则直接使用 Secret。
-   */
   try {
     const cookieModule =
       await import('../utils/cookie.js')
@@ -264,7 +264,8 @@ const tencentSearch = async keyword => {
     await fetch(
       url,
       {
-        method: 'POST',
+        method:
+          'POST',
 
         headers:
           QQ_HEADERS,
@@ -322,7 +323,8 @@ const tencentSearch = async keyword => {
       ''
 
     return {
-      id: songmid,
+      id:
+        songmid,
 
       name:
         song.name || '',
@@ -367,13 +369,25 @@ const tencentSongDetail = async (
   const payload = {
     comm: {
       ct: 24,
+
       cv: 4747474,
-      format: 'json',
-      inCharset: 'utf-8',
-      outCharset: 'utf-8',
+
+      format:
+        'json',
+
+      inCharset:
+        'utf-8',
+
+      outCharset:
+        'utf-8',
+
       notice: 0,
-      platform: 'yqq.json',
-      needNewCode: 1,
+
+      platform:
+        'yqq.json',
+
+      needNewCode:
+        1,
 
       uin:
         auth.uin
@@ -400,7 +414,8 @@ const tencentSongDetail = async (
     await fetch(
       'https://u.y.qq.com/cgi-bin/musicu.fcg',
       {
-        method: 'POST',
+        method:
+          'POST',
 
         headers:
           QQ_HEADERS,
@@ -475,6 +490,18 @@ const tencentSongDetail = async (
 
 /* =========================================================
  * QQ CgiGetVkey
+ *
+ * 主播放地址方案：
+ *
+ * vkey.GetVkeyServer
+ * CgiGetVkey
+ *
+ * 支持：
+ * RS01
+ * F000
+ * M800
+ * M500
+ * C400
  * ========================================================= */
 
 const tencentVkey = async (
@@ -486,18 +513,54 @@ const tencentVkey = async (
   const auth =
     getTencentAuth(cookie)
 
-  const prefixMap = {
-    M800: 'M800',
-    M500: 'M500',
-    C400: 'C400'
+  const qualityMap = {
+    RS01: {
+      prefix:
+        'RS01',
+
+      ext:
+        '.flac'
+    },
+
+    F000: {
+      prefix:
+        'F000',
+
+      ext:
+        '.m4a'
+    },
+
+    M800: {
+      prefix:
+        'M800',
+
+      ext:
+        '.mp3'
+    },
+
+    M500: {
+      prefix:
+        'M500',
+
+      ext:
+        '.mp3'
+    },
+
+    C400: {
+      prefix:
+        'C400',
+
+      ext:
+        '.m4a'
+    }
   }
 
-  const prefix =
-    prefixMap[quality] ||
-    'M800'
+  const current =
+    qualityMap[quality] ||
+    qualityMap.M800
 
   const filename =
-    `${prefix}${mediaMid}.mp3`
+    `${current.prefix}${mediaMid}${current.ext}`
 
   const guid =
     String(
@@ -507,19 +570,20 @@ const tencentVkey = async (
       )
     )
 
+  const uin =
+    auth.uin ||
+    '0'
+
   const payload = {
     comm: {
-      cv: 13020508,
-
-      v: 13020508,
-
-      ct: '11',
-
-      tmeAppID:
-        'qqmusic',
+      uin,
 
       format:
         'json',
+
+      ct: 24,
+
+      cv: 0,
 
       inCharset:
         'utf-8',
@@ -527,28 +591,22 @@ const tencentVkey = async (
       outCharset:
         'utf-8',
 
-      uid:
-        auth.uin,
+      notice:
+        0,
 
-      QIMEI36:
-        '0000000000000000000000000000000000000000000000',
+      platform:
+        'yqq.json',
 
-      qq:
-        auth.uin,
-
-      authst:
-        auth.authst,
-
-      tmeLoginType:
-        auth.loginType
+      needNewCode:
+        1
     },
 
     req_1: {
-      method:
-        'UrlGetVkey',
-
       module:
-        'music.vkey.GetVkey',
+        'vkey.GetVkeyServer',
+
+      method:
+        'CgiGetVkey',
 
       param: {
         filename: [
@@ -563,22 +621,42 @@ const tencentVkey = async (
 
         songtype: [
           0
-        ]
+        ],
+
+        uin,
+
+        loginflag:
+          1,
+
+        platform:
+          '20'
       }
     }
   }
 
+  if (
+    auth.authst
+  ) {
+    payload.comm.authst =
+      auth.authst
+  }
+
+  const body =
+    JSON.stringify(
+      payload
+    )
+
   const response =
     await fetch(
-      'https://u.y.qq.com/cgi-bin/musicu.fcg',
+      'https://u.y.qq.com/cgi-bin/musics.fcg',
       {
-        method: 'POST',
+        method:
+          'POST',
 
         headers:
           QQ_HEADERS,
 
-        body:
-          JSON.stringify(payload)
+        body
       }
     )
 
@@ -592,7 +670,9 @@ const tencentVkey = async (
     await response.json()
 
   const data =
-    json?.req_1?.data
+    json
+      ?.req_1
+      ?.data
 
   const list =
     data?.midurlinfo ||
@@ -602,9 +682,9 @@ const tencentVkey = async (
   const item =
     Array.isArray(list)
       ? list.find(
-          x =>
-            x?.purl ||
-            x?.wifiurl
+          item =>
+            item?.purl ||
+            item?.wifiurl
         )
       : null
 
@@ -616,21 +696,40 @@ const tencentVkey = async (
   if (!purl) {
     const result =
       data?.result ??
-      json?.req_1?.code ??
+      json
+        ?.req_1
+        ?.code ??
+      ''
+
+    const subcode =
+      data?.subcode ??
       ''
 
     throw new Error(
-      `QQ VKEY ${quality} 无播放地址，result=${result}: ${JSON.stringify(list).slice(0, 1500)}`
+      `QQ VKEY ${quality} 无播放地址，result=${result}, subcode=${subcode}: ${JSON.stringify(list).slice(0, 1500)}`
     )
   }
 
-  return purl.startsWith('http')
-    ? purl
-    : `https://isure.stream.qqmusic.qq.com/${purl}`
+  if (
+    purl.startsWith(
+      'http://'
+    ) ||
+    purl.startsWith(
+      'https://'
+    )
+  ) {
+    return purl
+  }
+
+  return (
+    `https://isure.stream.qqmusic.qq.com/${purl}`
+  )
 }
 
 /* =========================================================
  * QQ CgiGetEVkey
+ *
+ * 备用播放方案
  * ========================================================= */
 
 const tencentEVkey = async (
@@ -642,18 +741,54 @@ const tencentEVkey = async (
   const auth =
     getTencentAuth(cookie)
 
-  const prefixMap = {
-    M800: 'M800',
-    M500: 'M500',
-    C400: 'C400'
+  const qualityMap = {
+    RS01: {
+      prefix:
+        'RS01',
+
+      ext:
+        '.flac'
+    },
+
+    F000: {
+      prefix:
+        'F000',
+
+      ext:
+        '.m4a'
+    },
+
+    M800: {
+      prefix:
+        'M800',
+
+      ext:
+        '.mp3'
+    },
+
+    M500: {
+      prefix:
+        'M500',
+
+      ext:
+        '.mp3'
+    },
+
+    C400: {
+      prefix:
+        'C400',
+
+      ext:
+        '.m4a'
+    }
   }
 
-  const prefix =
-    prefixMap[quality] ||
-    'M800'
+  const current =
+    qualityMap[quality] ||
+    qualityMap.M800
 
   const filename =
-    `${prefix}${mediaMid}.mp3`
+    `${current.prefix}${mediaMid}${current.ext}`
 
   const guid =
     String(
@@ -664,11 +799,14 @@ const tencentEVkey = async (
     )
 
   const common = {
-    cv: 13020508,
+    cv:
+      13020508,
 
-    v: 13020508,
+    v:
+      13020508,
 
-    ct: '19',
+    ct:
+      '19',
 
     tmeAppID:
       'qqmusic',
@@ -749,7 +887,8 @@ const tencentEVkey = async (
     await fetch(
       `https://u.y.qq.com/cgi-bin/musics.fcg?sign=${encodeURIComponent(sign)}`,
       {
-        method: 'POST',
+        method:
+          'POST',
 
         headers:
           QQ_HEADERS,
@@ -768,7 +907,9 @@ const tencentEVkey = async (
     await response.json()
 
   const data =
-    json?.req_1?.data
+    json
+      ?.req_1
+      ?.data
 
   const list =
     data?.midurlinfo ||
@@ -778,9 +919,9 @@ const tencentEVkey = async (
   const item =
     Array.isArray(list)
       ? list.find(
-          x =>
-            x?.purl ||
-            x?.wifiurl
+          item =>
+            item?.purl ||
+            item?.wifiurl
         )
       : null
 
@@ -792,17 +933,34 @@ const tencentEVkey = async (
   if (!purl) {
     const result =
       data?.result ??
-      json?.req_1?.code ??
+      json
+        ?.req_1
+        ?.code ??
+      ''
+
+    const subcode =
+      data?.subcode ??
       ''
 
     throw new Error(
-      `QQ EVKEY ${quality} 无播放地址，result=${result}: ${JSON.stringify(list).slice(0, 1500)}`
+      `QQ EVKEY ${quality} 无播放地址，result=${result}, subcode=${subcode}: ${JSON.stringify(list).slice(0, 1500)}`
     )
   }
 
-  return purl.startsWith('http')
-    ? purl
-    : `https://isure.stream.qqmusic.qq.com/${purl}`
+  if (
+    purl.startsWith(
+      'http://'
+    ) ||
+    purl.startsWith(
+      'https://'
+    )
+  ) {
+    return purl
+  }
+
+  return (
+    `https://isure.stream.qqmusic.qq.com/${purl}`
+  )
 }
 
 /* =========================================================
@@ -817,7 +975,8 @@ const tencentStatus = async env => {
 
   if (!cookie) {
     return {
-      ok: false,
+      ok:
+        false,
 
       cookie_configured:
         false,
@@ -878,10 +1037,14 @@ const tencentStatus = async env => {
   let message =
     '已读取 QQ Cookie'
 
-  if (hasRealAuthst) {
+  if (
+    hasRealAuthst
+  ) {
     message =
       '已检测到 authst/strAuthst，可继续测试 QQ EVKEY'
-  } else if (hasMusicKey) {
+  } else if (
+    hasMusicKey
+  ) {
     message =
       '未检测到独立 authst；当前仅检测到 qqmusic_key/qm_keyst，EVKEY 可能仍受播放授权限制'
   } else {
@@ -980,7 +1143,9 @@ const tencentEVkeyTest = async (
   const qualities = [
     'M800',
     'M500',
-    'C400'
+    'C400',
+    'F000',
+    'RS01'
   ]
 
   const results = []
@@ -1001,13 +1166,15 @@ const tencentEVkeyTest = async (
       results.push({
         quality,
 
-        ok: true,
+        ok:
+          true,
 
         url
       })
 
       return {
-        ok: true,
+        ok:
+          true,
 
         songmid,
 
@@ -1020,7 +1187,8 @@ const tencentEVkeyTest = async (
       results.push({
         quality,
 
-        ok: false,
+        ok:
+          false,
 
         error:
           error?.message ||
@@ -1030,7 +1198,8 @@ const tencentEVkeyTest = async (
   }
 
   return {
-    ok: false,
+    ok:
+      false,
 
     songmid,
 
@@ -1043,6 +1212,13 @@ const tencentEVkeyTest = async (
 
 /* =========================================================
  * QQ 播放地址
+ *
+ * 顺序：
+ *
+ * 1. CgiGetVkey
+ * 2. EVKEY
+ *
+ * 每种音质依次尝试
  * ========================================================= */
 
 const tencentGetUrl = async (
@@ -1069,45 +1245,55 @@ const tencentGetUrl = async (
   const qualities = [
     'M800',
     'M500',
-    'C400'
+    'C400',
+    'F000',
+    'RS01'
   ]
 
   /*
-   * 先尝试 CgiGetVkey
+   * 第一阶段：
+   * CgiGetVkey
    */
   for (
     const quality
     of qualities
   ) {
     try {
-      return await tencentVkey(
-        id,
-        detail.media_mid,
-        quality,
-        cookie
-      )
+      const url =
+        await tencentVkey(
+          id,
+          detail.media_mid,
+          quality,
+          cookie
+        )
+
+      return url
     } catch {}
   }
 
   /*
-   * 再尝试 CgiGetEVkey
+   * 第二阶段：
+   * CgiGetEVkey
    */
   for (
     const quality
     of qualities
   ) {
     try {
-      return await tencentEVkey(
-        id,
-        detail.media_mid,
-        quality,
-        cookie
-      )
+      const url =
+        await tencentEVkey(
+          id,
+          detail.media_mid,
+          quality,
+          cookie
+        )
+
+      return url
     } catch {}
   }
 
   throw new Error(
-    'QQ 音乐未取得可播放地址'
+    'QQ 音乐未取得可播放地址：CgiGetVkey 和 CgiGetEVkey 均未返回播放地址'
   )
 }
 
@@ -1116,7 +1302,9 @@ const tencentGetUrl = async (
  * ========================================================= */
 
 const getTencentPic = id => {
-  return `https://y.qq.com/music/photo_new/T002R800x800M000${id}.jpg`
+  return (
+    `https://y.qq.com/music/photo_new/T002R800x800M000${id}.jpg`
+  )
 }
 
 /* =========================================================
@@ -1134,9 +1322,11 @@ const getTencentLyric = async (
 
   const payload = {
     comm: {
-      ct: 24,
+      ct:
+        24,
 
-      cv: 4747474,
+      cv:
+        4747474,
 
       format:
         'json',
@@ -1147,7 +1337,8 @@ const getTencentLyric = async (
       outCharset:
         'utf-8',
 
-      notice: 0,
+      notice:
+        0,
 
       platform:
         'yqq.json',
@@ -1180,7 +1371,8 @@ const getTencentLyric = async (
     await fetch(
       'https://u.y.qq.com/cgi-bin/musicu.fcg',
       {
-        method: 'POST',
+        method:
+          'POST',
 
         headers:
           QQ_HEADERS,
@@ -1313,7 +1505,8 @@ const api = async c => {
     } catch (error) {
       return c.json(
         {
-          ok: false,
+          ok:
+            false,
 
           error:
             error?.message ||
@@ -1345,13 +1538,15 @@ const api = async c => {
     } catch (error) {
       return c.json(
         {
-          code: 500,
+          code:
+            500,
 
           message:
             error?.message ||
             String(error),
 
-          data: []
+          data:
+            []
         },
 
         500
@@ -1380,13 +1575,15 @@ const api = async c => {
     } catch (error) {
       return c.json(
         {
-          code: 500,
+          code:
+            500,
 
           message:
             error?.message ||
             String(error),
 
-          url: ''
+          url:
+            ''
         },
 
         500
@@ -1404,7 +1601,9 @@ const api = async c => {
   ) {
     return c.json({
       url:
-        getTencentPic(id)
+        getTencentPic(
+          id
+        )
     })
   }
 
@@ -1434,13 +1633,15 @@ const api = async c => {
     } catch (error) {
       return c.json(
         {
-          code: 500,
+          code:
+            500,
 
           message:
             error?.message ||
             String(error),
 
-          lyric: ''
+          lyric:
+            ''
         },
 
         500
@@ -1449,7 +1650,7 @@ const api = async c => {
   }
 
   /* =======================================================
-   * 其他平台 Meting
+   * Meting 标准接口
    * ======================================================= */
 
   if (
@@ -1553,7 +1754,8 @@ const api = async c => {
 
     return c.json(
       {
-        code: 500,
+        code:
+          500,
 
         message:
           error?.message ||
@@ -1566,18 +1768,11 @@ const api = async c => {
 }
 
 /* =========================================================
- * 关键：兼容 src/app.js
- *
- * app.js 当前是：
- *
- * import apiService from './service/api.js'
- *
- * 所以这里必须 default export。
+ * Export
  * ========================================================= */
 
 export default api
 
-/* 同时保留 named export */
 export {
   api,
   tencentSearch,
