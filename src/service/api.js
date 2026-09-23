@@ -15,7 +15,6 @@ const cache = new LRUCache({
 
 // ============================================================
 // 网易云 EAPI 加密
-// Cloudflare Workers 不支持 Node 原生 AES-ECB，使用 aes-js 替代
 // ============================================================
 
 const patchNeteaseEapiEncrypt = (meting) => {
@@ -90,7 +89,7 @@ const patchNeteaseEapiEncrypt = (meting) => {
 }
 
 // ============================================================
-// Meting 方法映射
+// Meting 方法
 // ============================================================
 
 const METING_METHODS = {
@@ -107,8 +106,28 @@ const METING_METHODS = {
 // ============================================================
 // QQ 音乐搜索
 //
-// 使用 QQ 音乐目前的 musicu.fcg 搜索接口。
-// 不再使用旧的 client_search_cp + new_json=1。
+// 使用 QQ 音乐新版 musicu.fcg
+//
+// 请求结构：
+// {
+//   req_1: {
+//     method: "DoSearchForQQMusicDesktop",
+//     module: "music.search.SearchCgiService",
+//     param: {
+//       num_per_page: 30,
+//       page_num: 1,
+//       query: keyword,
+//       search_type: 0
+//     }
+//   }
+// }
+//
+// search_type:
+// 0 = 歌曲
+// 1 = 歌手
+// 2 = 专辑
+// 3 = 歌单
+// 7 = 歌词
 // ============================================================
 
 const tencentSearch = async (keyword) => {
@@ -116,227 +135,145 @@ const tencentSearch = async (keyword) => {
     'https://u.y.qq.com/cgi-bin/musicu.fcg'
 
   const payload = {
-    'music.search.SearchCgiService': {
-      method: 'DoSearchForQQMusicDesktop',
-      module: 'music.search.SearchCgiService',
+    req_1: {
+      method:
+        'DoSearchForQQMusicDesktop',
+
+      module:
+        'music.search.SearchCgiService',
+
       param: {
-        search_type: 0,
-        query: keyword,
+        num_per_page: 30,
         page_num: 1,
-        num_per_page: 30
+        query: keyword,
+        search_type: 0
       }
     }
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Referer': 'https://y.qq.com/',
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
-    },
-    body: JSON.stringify(payload)
-  })
+  const response = await fetch(
+    url,
+    {
+      method: 'POST',
+
+      headers: {
+        'Content-Type':
+          'application/json',
+
+        'Referer':
+          'https://y.qq.com/',
+
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+      },
+
+      body: JSON.stringify(
+        payload
+      )
+    }
+  )
+
+  const responseText =
+    await response.text()
 
   if (!response.ok) {
     throw new Error(
-      `QQ 搜索 HTTP ${response.status}`
+      `QQ 搜索 HTTP ${response.status}: ${responseText.slice(0, 500)}`
     )
   }
 
-  const json = await response.json()
+  let json
 
-  const service =
-    json?.['music.search.SearchCgiService']
+  try {
+    json =
+      JSON.parse(responseText)
+  } catch {
+    throw new Error(
+      `QQ 搜索返回非 JSON: ${responseText.slice(0, 500)}`
+    )
+  }
+
+  // QQ 返回错误代码
+  const result =
+    json?.req_1
+
+  if (!result) {
+    throw new Error(
+      `QQ 搜索缺少 req_1: ${JSON.stringify(json).slice(0, 1000)}`
+    )
+  }
+
+  if (
+    result.code !== undefined &&
+    Number(result.code) !== 0
+  ) {
+    throw new Error(
+      `QQ 搜索返回错误 code=${result.code}: ${JSON.stringify(result).slice(0, 1000)}`
+    )
+  }
 
   const songs =
-    service?.data?.body?.song?.list
+    result?.data?.body?.song?.list
 
   if (!Array.isArray(songs)) {
     throw new Error(
-      'QQ 搜索返回结构异常'
+      `QQ 搜索歌曲列表不存在: ${JSON.stringify(result).slice(0, 1500)}`
     )
   }
 
-  return songs.map((song) => {
-    const singerList =
-      Array.isArray(song.singer)
-        ? song.singer
-        : []
+  return songs.map(
+    (song) => {
+      const singer =
+        Array.isArray(song.singer)
+          ? song.singer
+          : []
 
-    return {
-      id:
-        song.mid ||
-        String(song.id || ''),
+      const artist =
+        singer
+          .map(
+            (x) =>
+              x?.name || ''
+          )
+          .filter(Boolean)
 
-      name:
-        song.name ||
-        song.title ||
-        '',
+      return {
+        id:
+          song.mid ||
+          String(
+            song.id || ''
+          ),
 
-      artist:
-        singerList
-          .map((x) => x?.name || '')
-          .filter(Boolean),
+        name:
+          song.name ||
+          '',
 
-      album:
-        song.album?.name ||
-        '',
+        artist,
 
-      pic_id:
-        song.album?.mid ||
-        '',
+        album:
+          song.album?.name ||
+          '',
 
-      url_id:
-        song.mid ||
-        String(song.id || ''),
+        pic_id:
+          song.album?.mid ||
+          '',
 
-      lyric_id:
-        song.mid ||
-        String(song.id || ''),
+        url_id:
+          song.mid ||
+          String(
+            song.id || ''
+          ),
 
-      source: 'tencent'
+        lyric_id:
+          song.mid ||
+          String(
+            song.id || ''
+          ),
+
+        source:
+          'tencent'
+      }
     }
-  })
-}
-
-// ============================================================
-// QQ 音乐搜索备用方案
-//
-// 如果新接口异常，则尝试旧接口。
-// 注意：这里故意不使用 new_json=1。
-// 2026 年实测 new_json=1 会导致返回 totalnum=0、list=[]。
-// ============================================================
-
-const tencentSearchLegacy = async (keyword) => {
-  const url =
-    'https://c.y.qq.com/soso/fcgi-bin/client_search_cp' +
-    '?format=json' +
-    '&p=1' +
-    '&n=30' +
-    '&w=' + encodeURIComponent(keyword) +
-    '&aggr=1' +
-    '&lossless=1' +
-    '&cr=1'
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Referer': 'https://y.qq.com/',
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
-    }
-  })
-
-  if (!response.ok) {
-    throw new Error(
-      `QQ 旧搜索 HTTP ${response.status}`
-    )
-  }
-
-  const json = await response.json()
-
-  const songs =
-    json?.data?.song?.list
-
-  if (!Array.isArray(songs)) {
-    throw new Error(
-      'QQ 旧搜索返回结构异常'
-    )
-  }
-
-  return songs.map((song) => ({
-    id:
-      song.songmid ||
-      String(song.songid || ''),
-
-    name:
-      song.songname ||
-      '',
-
-    artist:
-      Array.isArray(song.singer)
-        ? song.singer
-            .map((x) => x?.name || '')
-            .filter(Boolean)
-        : [],
-
-    album:
-      song.albumname ||
-      '',
-
-    pic_id:
-      song.albummid ||
-      '',
-
-    url_id:
-      song.songmid ||
-      String(song.songid || ''),
-
-    lyric_id:
-      song.songmid ||
-      String(song.songid || ''),
-
-    source: 'tencent'
-  }))
-}
-
-// ============================================================
-// QQ 搜索总入口
-//
-// 先走新版 musicu.fcg
-// 新版失败再走旧接口
-// ============================================================
-
-const searchTencent = async (keyword) => {
-  let firstError = null
-
-  try {
-    const result =
-      await tencentSearch(keyword)
-
-    if (Array.isArray(result) && result.length > 0) {
-      return result
-    }
-
-    firstError =
-      new Error('QQ 新搜索返回空结果')
-  } catch (error) {
-    console.error(
-      'QQ 新搜索失败:',
-      error
-    )
-
-    firstError = error
-  }
-
-  try {
-    const result =
-      await tencentSearchLegacy(keyword)
-
-    if (Array.isArray(result)) {
-      return result
-    }
-
-    throw new Error(
-      'QQ 旧搜索返回空结果'
-    )
-  } catch (error) {
-    console.error(
-      'QQ 旧搜索失败:',
-      error
-    )
-
-    throw new HTTPException(500, {
-      message:
-        `QQ 音乐搜索失败: ${
-          error?.message ||
-          firstError?.message ||
-          '未知错误'
-        }`
-    })
-  }
+  )
 }
 
 // ============================================================
@@ -395,10 +332,13 @@ export default async (c) => {
       'kuwo'
     ].includes(server)
   ) {
-    throw new HTTPException(400, {
-      message:
-        'server 参数不合法'
-    })
+    throw new HTTPException(
+      400,
+      {
+        message:
+          'server 参数不合法'
+      }
+    )
   }
 
   if (
@@ -413,10 +353,13 @@ export default async (c) => {
       'pic'
     ].includes(type)
   ) {
-    throw new HTTPException(400, {
-      message:
-        'type 参数不合法'
-    })
+    throw new HTTPException(
+      400,
+      {
+        message:
+          'type 参数不合法'
+      }
+    )
   }
 
   // ----------------------------------------------------------
@@ -424,7 +367,8 @@ export default async (c) => {
   // ----------------------------------------------------------
 
   if (
-    ['lrc', 'url', 'pic'].includes(type)
+    ['lrc', 'url', 'pic']
+      .includes(type)
   ) {
     if (
       auth(
@@ -434,68 +378,98 @@ export default async (c) => {
         token
       ) !== authToken
     ) {
-      throw new HTTPException(401, {
-        message:
-          '鉴权失败,非法调用'
-      })
+      throw new HTTPException(
+        401,
+        {
+          message:
+            '鉴权失败,非法调用'
+        }
+      )
     }
   }
 
   // ----------------------------------------------------------
   // 4. QQ 音乐搜索
   //
-  // 特殊处理：
-  // 不使用 LRU 缓存，避免之前的 [] 被缓存。
+  // QQ 搜索不使用 LRU 缓存。
+  // 防止之前的 [] 被缓存。
   // ----------------------------------------------------------
 
   if (
     server === 'tencent' &&
     type === 'search'
   ) {
-    const data =
-      await searchTencent(id)
+    let data
+
+    try {
+      data =
+        await tencentSearch(id)
+    } catch (error) {
+      console.error(
+        'QQ 音乐搜索失败:',
+        error
+      )
+
+      throw new HTTPException(
+        500,
+        {
+          message:
+            `QQ 音乐搜索失败: ${
+              error?.message ||
+              '未知错误'
+            }`
+        }
+      )
+    }
 
     return c.json(
-      data.map((x) => {
-        return {
-          title: x.name,
+      data.map(
+        (x) => {
+          return {
+            title:
+              x.name,
 
-          author:
-            Array.isArray(x.artist)
-              ? x.artist.join(' / ')
-              : '',
+            author:
+              Array.isArray(
+                x.artist
+              )
+                ? x.artist.join(
+                    ' / '
+                  )
+                : '',
 
-          url:
-            `${baseUrl}/api?server=tencent&type=url&id=${encodeURIComponent(
-              x.url_id
-            )}&auth=${auth(
-              'tencent',
-              'url',
-              x.url_id,
-              token
-            )}`,
+            url:
+              `${baseUrl}/api?server=tencent&type=url&id=${encodeURIComponent(
+                x.url_id
+              )}&auth=${auth(
+                'tencent',
+                'url',
+                x.url_id,
+                token
+              )}`,
 
-          pic:
-            `${baseUrl}/api?server=tencent&type=pic&id=${encodeURIComponent(
-              x.pic_id
-            )}&auth=${auth(
-              'tencent',
-              'pic',
-              x.pic_id,
-              token
-            )}`,
+            pic:
+              `${baseUrl}/api?server=tencent&type=pic&id=${encodeURIComponent(
+                x.pic_id
+              )}&auth=${auth(
+                'tencent',
+                'pic',
+                x.pic_id,
+                token
+              )}`,
 
-          lrc:
-            `${baseUrl}/api?server=tencent&type=lrc&id=${encodeURIComponent(
-              x.lyric_id
-            )}&auth=${auth(
-              'tencent',
-              'lrc',
-              x.lyric_id,
-              token
-            )}`
+            lrc:
+              `${baseUrl}/api?server=tencent&type=lrc&id=${encodeURIComponent(
+                x.lyric_id
+              )}&auth=${auth(
+                'tencent',
+                'lrc',
+                x.lyric_id,
+                token
+              )}`
+          }
         }
-      })
+      )
     )
   }
 
@@ -507,30 +481,40 @@ export default async (c) => {
     `${server}/${type}/${id}`
 
   let data =
-    cache.get(cacheKey)
+    cache.get(
+      cacheKey
+    )
 
-  if (data === undefined) {
+  if (
+    data === undefined
+  ) {
     c.header(
       'x-cache',
       'miss'
     )
 
     const meting =
-      new Meting(server)
+      new Meting(
+        server
+      )
 
-    // 网易云特殊处理
+    // 网易云 EAPI
     patchNeteaseEapiEncrypt(
       meting
     )
 
-    meting.format(true)
+    meting.format(
+      true
+    )
 
     // --------------------------------------------------------
-    // Cookie / Referer
+    // Cookie
     // --------------------------------------------------------
 
     const referrer =
-      c.req.header('referer')
+      c.req.header(
+        'referer'
+      )
 
     if (
       isAllowedHost(
@@ -545,7 +529,9 @@ export default async (c) => {
         )
 
       if (cookie) {
-        meting.cookie(cookie)
+        meting.cookie(
+          cookie
+        )
       }
     }
 
@@ -560,16 +546,21 @@ export default async (c) => {
 
     try {
       response =
-        await meting[method](id)
+        await meting[method](
+          id
+        )
     } catch (error) {
       console.error(
         error
       )
 
-      throw new HTTPException(500, {
-        message:
-          '上游 API 调用失败'
-      })
+      throw new HTTPException(
+        500,
+        {
+          message:
+            '上游 API 调用失败'
+        }
+      )
     }
 
     // --------------------------------------------------------
@@ -578,7 +569,9 @@ export default async (c) => {
 
     try {
       data =
-        JSON.parse(response)
+        JSON.parse(
+          response
+        )
     } catch (error) {
       console.error(
         'JSON 解析失败:',
@@ -586,10 +579,13 @@ export default async (c) => {
         response
       )
 
-      throw new HTTPException(500, {
-        message:
-          '上游 API 返回格式异常'
-      })
+      throw new HTTPException(
+        500,
+        {
+          message:
+            '上游 API 返回格式异常'
+        }
+      )
     }
 
     // --------------------------------------------------------
@@ -617,7 +613,9 @@ export default async (c) => {
   // 6. 音乐 URL
   // ----------------------------------------------------------
 
-  if (type === 'url') {
+  if (
+    type === 'url'
+  ) {
     let url =
       data.url
 
@@ -648,12 +646,15 @@ export default async (c) => {
           )
 
       if (
-        url.includes('vuutv=')
+        url.includes(
+          'vuutv='
+        )
       ) {
         const tempUrl =
           new URL(url)
 
-        tempUrl.search = ''
+        tempUrl.search =
+          ''
 
         url =
           tempUrl.toString()
@@ -724,7 +725,8 @@ export default async (c) => {
     return c.text(
       lyricFormat(
         data.lyric,
-        data.tlyric || ''
+        data.tlyric ||
+          ''
       )
     )
   }
@@ -734,47 +736,53 @@ export default async (c) => {
   // ----------------------------------------------------------
 
   return c.json(
-    data.map((x) => {
-      return {
-        title:
-          x.name,
+    data.map(
+      (x) => {
+        return {
+          title:
+            x.name,
 
-        author:
-          Array.isArray(x.artist)
-            ? x.artist.join(' / ')
-            : '',
+          author:
+            Array.isArray(
+              x.artist
+            )
+              ? x.artist.join(
+                  ' / '
+                )
+              : '',
 
-        url:
-          `${baseUrl}/api?server=${server}&type=url&id=${encodeURIComponent(
-            x.url_id
-          )}&auth=${auth(
-            server,
-            'url',
-            x.url_id,
-            token
-          )}`,
+          url:
+            `${baseUrl}/api?server=${server}&type=url&id=${encodeURIComponent(
+              x.url_id
+            )}&auth=${auth(
+              server,
+              'url',
+              x.url_id,
+              token
+            )}`,
 
-        pic:
-          `${baseUrl}/api?server=${server}&type=pic&id=${encodeURIComponent(
-            x.pic_id
-          )}&auth=${auth(
-            server,
-            'pic',
-            x.pic_id,
-            token
-          )}`,
+          pic:
+            `${baseUrl}/api?server=${server}&type=pic&id=${encodeURIComponent(
+              x.pic_id
+            )}&auth=${auth(
+              server,
+              'pic',
+              x.pic_id,
+              token
+            )}`,
 
-        lrc:
-          `${baseUrl}/api?server=${server}&type=lrc&id=${encodeURIComponent(
-            x.lyric_id
-          )}&auth=${auth(
-            server,
-            'lrc',
-            x.lyric_id,
-            token
-          )}`
+          lrc:
+            `${baseUrl}/api?server=${server}&type=lrc&id=${encodeURIComponent(
+              x.lyric_id
+            )}&auth=${auth(
+              server,
+              'lrc',
+              x.lyric_id,
+              token
+            )}`
+        }
       }
-    })
+    )
   )
 }
 
@@ -796,5 +804,7 @@ const auth = (
     .update(
       `${server}${type}${id}`
     )
-    .digest('hex')
+    .digest(
+      'hex'
+    )
 }
